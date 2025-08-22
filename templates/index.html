@@ -4,10 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delhi PM2.5 Forecast</title>
+    <title>Delhi PM2.5 Forecast & Analysis</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
@@ -16,9 +14,10 @@
         .day:hover { transform: scale(1.05); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
         .modal-overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(5px);
             display: flex; align-items: center; justify-content: center;
             opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease;
+            z-index: 50;
         }
         .modal-overlay.visible { opacity: 1; visibility: visible; }
         .modal-content {
@@ -30,13 +29,14 @@
 </head>
 <body class="bg-gray-100 text-gray-800">
 
-    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+    <div class="container mx-auto p-4 md:p-8 max-w-5xl">
         <header class="text-center mb-8">
             <h1 class="text-4xl font-bold text-gray-900">Delhi PM2.5 Forecast Calendar</h1>
-            <p class="text-lg text-gray-600 mt-2">Click on a day to see the predicted PM2.5 level.</p>
+            <p class="text-lg text-gray-600 mt-2">Compare historical data with forecasts for 2023, 2024, and 2025.</p>
         </header>
 
-        <div class="bg-white p-6 rounded-2xl shadow-lg">
+        <!-- Calendar Section -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg mb-4">
             <div id="calendar-header" class="flex justify-between items-center mb-4">
                 <button id="prev-month" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors">&lt;</button>
                 <h2 id="month-year" class="text-2xl font-semibold"></h2>
@@ -48,8 +48,9 @@
             <div id="calendar-body" class="calendar-grid"></div>
         </div>
 
-        <footer class="text-center mt-8 text-gray-500">
-            <p>AQI Color Scale based on PM2.5 levels (µg/m³)</p>
+        <!-- Legend Section (Moved Here) -->
+        <footer class="text-center mb-12 text-gray-500">
+            <p>Color scale based on predicted PM2.5 level (µg/m³)</p>
             <div class="flex justify-center flex-wrap gap-2 mt-2">
                 <span class="px-2 py-1 text-xs rounded bg-green-200 text-green-800">Good (0-30)</span>
                 <span class="px-2 py-1 text-xs rounded bg-yellow-200 text-yellow-800">Moderate (31-90)</span>
@@ -58,31 +59,42 @@
                 <span class="px-2 py-1 text-xs rounded bg-red-800 text-white">Severe (251+)</span>
             </div>
         </footer>
+
+        <!-- Plots Section -->
+        <div class="space-y-12">
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold text-center mb-4">Full Forecast Plot</h2>
+                <img src="{{ url_for('static', filename=forecast_plot_filename) }}" alt="Forecast Plot" class="w-full h-auto rounded-lg">
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold text-center mb-4">Forecast Components</h2>
+                <img src="{{ url_for('static', filename=components_plot_filename) }}" alt="Components Plot" class="w-full h-auto rounded-lg">
+            </div>
+        </div>
     </div>
 
-    <!-- Modal for displaying AQI details -->
-    <div id="aqi-modal" class="modal-overlay">
-        <div class="modal-content text-center w-80 shadow-2xl">
-            <h3 id="modal-date" class="text-2xl font-bold mb-2"></h3>
-            <p class="text-lg mb-4">Predicted PM2.5 Level:</p>
-            <div id="modal-aqi-value" class="text-6xl font-bold mb-4"></div>
-            <div id="modal-aqi-category" class="text-xl font-medium px-4 py-2 rounded-full mb-6"></div>
-            <button id="close-modal" class="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">Close</button>
+    <!-- Modal for displaying details -->
+    <div id="data-modal" class="modal-overlay">
+        <div class="modal-content text-center w-96 shadow-2xl">
+            <h3 id="modal-date" class="text-2xl font-bold mb-4"></h3>
+            <div id="modal-body" class="space-y-4">
+                <!-- Content will be injected by JavaScript -->
+            </div>
+            <button id="close-modal" class="w-full mt-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">Close</button>
         </div>
     </div>
 
     <script>
-        const forecastData = {{ forecast_data|tojson }};
-        const forecastMap = new Map(forecastData.map(item => [item.ds, item.yhat]));
+        const combinedData = {{ combined_data|tojson }};
+        const dataMap = new Map(combinedData.map(item => [item.ds, { y: item.y, yhat: item.yhat }]));
 
         const calendarBody = document.getElementById('calendar-body');
         const monthYearEl = document.getElementById('month-year');
         const prevMonthBtn = document.getElementById('prev-month');
         const nextMonthBtn = document.getElementById('next-month');
-        const modal = document.getElementById('aqi-modal');
+        const modal = document.getElementById('data-modal');
         const modalDate = document.getElementById('modal-date');
-        const modalAqiValue = document.getElementById('modal-aqi-value');
-        const modalAqiCategory = document.getElementById('modal-aqi-category');
+        const modalBody = document.getElementById('modal-body');
         const closeModalBtn = document.getElementById('close-modal');
 
         let currentDate = new Date('2023-01-01T00:00:00');
@@ -103,7 +115,7 @@
             const daysInMonth = new Date(year, month + 1, 0).getDate();
 
             for (let i = 0; i < firstDay; i++) {
-                calendarBody.innerHTML += `<div class="p-2"></div>`;
+                calendarBody.innerHTML += `<div></div>`;
             }
 
             for (let day = 1; day <= daysInMonth; day++) {
@@ -116,19 +128,17 @@
                 dayNumber.className = 'font-semibold text-lg';
                 dayEl.appendChild(dayNumber);
 
-                if (forecastMap.has(dateStr)) {
-                    const aqiValue = forecastMap.get(dateStr);
-                    const aqiInfo = getAqiInfo(aqiValue);
+                if (dataMap.has(dateStr)) {
+                    const dayData = dataMap.get(dateStr);
+                    const aqiInfo = getAqiInfo(dayData.yhat);
                     dayEl.classList.add(aqiInfo.color);
-                    dayEl.dataset.date = dateStr;
-                    dayEl.dataset.aqi = aqiValue;
 
                     const aqiText = document.createElement('span');
-                    aqiText.textContent = Math.round(aqiValue);
+                    aqiText.textContent = Math.round(dayData.yhat);
                     aqiText.className = `text-xs font-bold ${aqiInfo.textColor}`;
                     dayEl.appendChild(aqiText);
 
-                    dayEl.addEventListener('click', () => showModal(dateStr, aqiValue));
+                    dayEl.addEventListener('click', () => showModal(dateStr, dayData));
                 } else {
                     dayEl.classList.add('bg-gray-50', 'cursor-not-allowed');
                 }
@@ -136,15 +146,38 @@
             }
         }
 
-        function showModal(dateStr, aqiValue) {
+        function showModal(dateStr, data) {
             const date = new Date(dateStr + 'T00:00:00');
             modalDate.textContent = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            modalAqiValue.textContent = Math.round(aqiValue);
 
-            const aqiInfo = getAqiInfo(aqiValue);
-            modalAqiCategory.textContent = aqiInfo.category;
-            modalAqiCategory.className = `text-xl font-medium px-4 py-2 rounded-full mb-6 ${aqiInfo.color} ${aqiInfo.textColor}`;
+            let contentHTML = '';
 
+            const predictedAqiInfo = getAqiInfo(data.yhat);
+            contentHTML += `
+                <div>
+                    <p class="text-lg">Predicted PM2.5</p>
+                    <div class="text-6xl font-bold">${Math.round(data.yhat)}</div>
+                    <div class="text-xl font-medium px-4 py-2 rounded-full mt-2 inline-block ${predictedAqiInfo.color} ${predictedAqiInfo.textColor}">
+                        ${predictedAqiInfo.category}
+                    </div>
+                </div>
+            `;
+
+            if (data.y !== null) {
+                const actualAqiInfo = getAqiInfo(data.y);
+                contentHTML += `
+                    <hr class="my-4">
+                    <div>
+                        <p class="text-lg">Actual PM2.5</p>
+                        <div class="text-6xl font-bold">${Math.round(data.y)}</div>
+                        <div class="text-xl font-medium px-4 py-2 rounded-full mt-2 inline-block ${actualAqiInfo.color} ${actualAqiInfo.textColor}">
+                            ${actualAqiInfo.category}
+                        </div>
+                    </div>
+                `;
+            }
+
+            modalBody.innerHTML = contentHTML;
             modal.classList.add('visible');
         }
 
@@ -165,6 +198,7 @@
             }
         });
 
+        // Initial render
         renderCalendar(currentDate.getFullYear(), currentDate.getMonth());
     </script>
 </body>
