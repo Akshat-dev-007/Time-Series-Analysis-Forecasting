@@ -1,0 +1,171 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delhi PM2.5 Forecast</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+        .day { transition: all 0.2s ease-in-out; }
+        .day:hover { transform: scale(1.05); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        .modal-overlay.visible { opacity: 1; visibility: visible; }
+        .modal-content {
+            background: white; padding: 2rem; border-radius: 1rem;
+            transform: scale(0.9); transition: transform 0.3s ease;
+        }
+        .modal-overlay.visible .modal-content { transform: scale(1); }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-900">Delhi PM2.5 Forecast Calendar</h1>
+            <p class="text-lg text-gray-600 mt-2">Click on a day to see the predicted PM2.5 level.</p>
+        </header>
+
+        <div class="bg-white p-6 rounded-2xl shadow-lg">
+            <div id="calendar-header" class="flex justify-between items-center mb-4">
+                <button id="prev-month" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors">&lt;</button>
+                <h2 id="month-year" class="text-2xl font-semibold"></h2>
+                <button id="next-month" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors">&gt;</button>
+            </div>
+            <div class="grid grid-cols-7 text-center font-medium text-gray-500 mb-2">
+                <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+            </div>
+            <div id="calendar-body" class="calendar-grid"></div>
+        </div>
+
+        <footer class="text-center mt-8 text-gray-500">
+            <p>AQI Color Scale based on PM2.5 levels (µg/m³)</p>
+            <div class="flex justify-center flex-wrap gap-2 mt-2">
+                <span class="px-2 py-1 text-xs rounded bg-green-200 text-green-800">Good (0-30)</span>
+                <span class="px-2 py-1 text-xs rounded bg-yellow-200 text-yellow-800">Moderate (31-90)</span>
+                <span class="px-2 py-1 text-xs rounded bg-orange-200 text-orange-800">Poor (91-120)</span>
+                <span class="px-2 py-1 text-xs rounded bg-red-200 text-red-800">Very Poor (121-250)</span>
+                <span class="px-2 py-1 text-xs rounded bg-red-800 text-white">Severe (251+)</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Modal for displaying AQI details -->
+    <div id="aqi-modal" class="modal-overlay">
+        <div class="modal-content text-center w-80 shadow-2xl">
+            <h3 id="modal-date" class="text-2xl font-bold mb-2"></h3>
+            <p class="text-lg mb-4">Predicted PM2.5 Level:</p>
+            <div id="modal-aqi-value" class="text-6xl font-bold mb-4"></div>
+            <div id="modal-aqi-category" class="text-xl font-medium px-4 py-2 rounded-full mb-6"></div>
+            <button id="close-modal" class="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">Close</button>
+        </div>
+    </div>
+
+    <script>
+        const forecastData = {{ forecast_data|tojson }};
+        const forecastMap = new Map(forecastData.map(item => [item.ds, item.yhat]));
+
+        const calendarBody = document.getElementById('calendar-body');
+        const monthYearEl = document.getElementById('month-year');
+        const prevMonthBtn = document.getElementById('prev-month');
+        const nextMonthBtn = document.getElementById('next-month');
+        const modal = document.getElementById('aqi-modal');
+        const modalDate = document.getElementById('modal-date');
+        const modalAqiValue = document.getElementById('modal-aqi-value');
+        const modalAqiCategory = document.getElementById('modal-aqi-category');
+        const closeModalBtn = document.getElementById('close-modal');
+
+        let currentDate = new Date('2023-01-01T00:00:00');
+
+        function getAqiInfo(value) {
+            if (value <= 30) return { category: 'Good', color: 'bg-green-200', textColor: 'text-green-800' };
+            if (value <= 90) return { category: 'Moderate', color: 'bg-yellow-200', textColor: 'text-yellow-800' };
+            if (value <= 120) return { category: 'Poor', color: 'bg-orange-200', textColor: 'text-orange-800' };
+            if (value <= 250) return { category: 'Very Poor', color: 'bg-red-200', textColor: 'text-red-800' };
+            return { category: 'Severe', color: 'bg-red-800', textColor: 'text-white' };
+        }
+
+        function renderCalendar(year, month) {
+            calendarBody.innerHTML = '';
+            monthYearEl.textContent = new Date(year, month).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            for (let i = 0; i < firstDay; i++) {
+                calendarBody.innerHTML += `<div class="p-2"></div>`;
+            }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayEl = document.createElement('div');
+                dayEl.className = 'day p-2 h-20 flex flex-col items-center justify-center border rounded-lg cursor-pointer';
+
+                const dayNumber = document.createElement('span');
+                dayNumber.textContent = day;
+                dayNumber.className = 'font-semibold text-lg';
+                dayEl.appendChild(dayNumber);
+
+                if (forecastMap.has(dateStr)) {
+                    const aqiValue = forecastMap.get(dateStr);
+                    const aqiInfo = getAqiInfo(aqiValue);
+                    dayEl.classList.add(aqiInfo.color);
+                    dayEl.dataset.date = dateStr;
+                    dayEl.dataset.aqi = aqiValue;
+
+                    const aqiText = document.createElement('span');
+                    aqiText.textContent = Math.round(aqiValue);
+                    aqiText.className = `text-xs font-bold ${aqiInfo.textColor}`;
+                    dayEl.appendChild(aqiText);
+
+                    dayEl.addEventListener('click', () => showModal(dateStr, aqiValue));
+                } else {
+                    dayEl.classList.add('bg-gray-50', 'cursor-not-allowed');
+                }
+                calendarBody.appendChild(dayEl);
+            }
+        }
+
+        function showModal(dateStr, aqiValue) {
+            const date = new Date(dateStr + 'T00:00:00');
+            modalDate.textContent = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            modalAqiValue.textContent = Math.round(aqiValue);
+
+            const aqiInfo = getAqiInfo(aqiValue);
+            modalAqiCategory.textContent = aqiInfo.category;
+            modalAqiCategory.className = `text-xl font-medium px-4 py-2 rounded-full mb-6 ${aqiInfo.color} ${aqiInfo.textColor}`;
+
+            modal.classList.add('visible');
+        }
+
+        prevMonthBtn.addEventListener('click', () => {
+            currentDate.setMonth(currentDate.getMonth() - 1);
+            renderCalendar(currentDate.getFullYear(), currentDate.getMonth());
+        });
+
+        nextMonthBtn.addEventListener('click', () => {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+            renderCalendar(currentDate.getFullYear(), currentDate.getMonth());
+        });
+
+        closeModalBtn.addEventListener('click', () => modal.classList.remove('visible'));
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('visible');
+            }
+        });
+
+        renderCalendar(currentDate.getFullYear(), currentDate.getMonth());
+    </script>
+</body>
+</html>
